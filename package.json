@@ -1,0 +1,37 @@
+{
+  "name": "finance-app",
+  "version": "0.1.0",
+  "description": "Ferramenta para ler faturas de cartão de crédito em PDF e retornar os dados em JSON.",
+  "main": "dist/main/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/main/server.ts",
+    "start": "node dist/main/server.js",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix"
+  },
+  "keywords": [
+    "finance",
+    "pdf",
+    "credit-card",
+    "statement",
+    "parser"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/multipart": "^9.2.1",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.6.1",
+    "openai": "^6.6.0",
+    "pdf2json": "^3.1.4"
+  },
+  "devDependencies": {
+    "@rocketseat/eslint-config": "^3.0.12",
+    "@types/node": "^24.9.1",
+    "eslint": "^9.38.0",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.9.3"
+  }
+}
