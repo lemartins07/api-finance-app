@@ -3,12 +3,12 @@ import {
   StatementExtractionParams,
   StatementExtractionService,
 } from '../../domain/services/StatementExtractionService'
-import { NormalizedTextLine, LocalStatementParserConfig } from '../parsers'
+import { LocalStatementParserConfig, NormalizedTextLine } from '../parsers'
+import { createDefaultStatementParserRegistry } from '../parsers/createStatementParserRegistry'
 import {
   ResolvedStatementParser,
   StatementParserRegistry,
 } from '../parsers/StatementParserRegistry'
-import { createDefaultStatementParserRegistry } from '../parsers/createStatementParserRegistry'
 
 export class LocalParserInsufficientDataError extends Error {
   constructor(message = 'Parser local não encontrou dados suficientes.') {
