@@ -4,6 +4,7 @@ import fastify, { FastifyInstance } from 'fastify'
 import { ExtractStatementUseCase } from '../application/useCases/ExtractStatementUseCase'
 import { ParseStatementController } from '../infrastructure/http/controllers/ParseStatementController'
 import { registerStatementRoutes } from '../infrastructure/http/routes/statementRoutes'
+import { createDefaultStatementParserRegistry } from '../infrastructure/parsers'
 import { LocalStatementExtractionService } from '../infrastructure/services'
 
 export function buildApp(): FastifyInstance {
@@ -18,7 +19,12 @@ export function buildApp(): FastifyInstance {
     },
   })
 
-  const extractionService = new LocalStatementExtractionService()
+  const parserRegistry = createDefaultStatementParserRegistry({
+    banks: ['generic', 'nubank', 'itau', 'bradesco', 'santander'],
+    defaultBank: 'generic',
+  })
+
+  const extractionService = new LocalStatementExtractionService(parserRegistry)
 
   const extractStatementUseCase = new ExtractStatementUseCase(extractionService)
   const parseStatementController = new ParseStatementController(
