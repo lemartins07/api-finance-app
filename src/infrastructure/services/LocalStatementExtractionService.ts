@@ -3,11 +3,12 @@ import {
   StatementExtractionParams,
   StatementExtractionService,
 } from '../../domain/services/StatementExtractionService'
-import { NormalizedTextLine } from '../parsers/pdf'
+import { NormalizedTextLine, LocalStatementParserConfig } from '../parsers'
 import {
-  LocalStatementParser,
-  LocalStatementParserConfig,
-} from '../parsers/pdf/LocalStatementParser'
+  ResolvedStatementParser,
+  StatementParserRegistry,
+} from '../parsers/StatementParserRegistry'
+import { createDefaultStatementParserRegistry } from '../parsers/createStatementParserRegistry'
 
 export class LocalParserInsufficientDataError extends Error {
   constructor(message = 'Parser local não encontrou dados suficientes.') {
@@ -16,17 +17,35 @@ export class LocalParserInsufficientDataError extends Error {
   }
 }
 
-export class LocalStatementExtractionService implements StatementExtractionService {
-  private readonly parser: LocalStatementParser
+export class UnsupportedBankError extends Error {
+  constructor(bank: string) {
+    super(`Banco '${bank}' não é suportado pelo parser local.`)
+    this.name = 'UnsupportedBankError'
+  }
+}
 
-  constructor(config?: LocalStatementParserConfig) {
-    this.parser = new LocalStatementParser(config)
+export class LocalStatementExtractionService implements StatementExtractionService {
+  private readonly parserRegistry: StatementParserRegistry
+
+  constructor(
+    parserRegistry?: StatementParserRegistry,
+    config?: LocalStatementParserConfig,
+  ) {
+    this.parserRegistry =
+      parserRegistry ?? createDefaultStatementParserRegistry({ localParserConfig: config })
   }
 
   async extractFromPdf(
     params: StatementExtractionParams,
   ): Promise<CreditCardStatement> {
-    const result = await this.parser.parse(params.fileBuffer)
+    const resolvedParser = this.resolveParser(params.bank)
+    const result = await resolvedParser.parser.parse(params.fileBuffer)
+
+    if (resolvedParser.isFallback) {
+      console.warn(
+        `[local-parser] banco '${params.bank}' não suportado explicitamente, utilizando parser '${resolvedParser.bankKey}' como fallback`,
+      )
+    }
 
     if (result.metrics) {
       const { pdfExtractionMs, normalizationMs, headerDetectionMs, transactionDetectionMs, totalMs } =
@@ -44,11 +63,16 @@ export class LocalStatementExtractionService implements StatementExtractionServi
       throw new LocalParserInsufficientDataError()
     }
 
-    console.info('[local-parser] sucesso: statement montado localmente')
+    console.info(
+      `[local-parser] sucesso: statement montado localmente para banco '${params.bank}' (parser='${resolvedParser.bankKey}')`,
+    )
 
     const metadata = {
       ...(result.statement.metadata ?? {}),
       parser: 'local',
+      bank: params.bank,
+      resolvedBank: resolvedParser.bankKey,
+      usedFallbackParser: resolvedParser.isFallback,
       rawLinesSample: result.lines
         .slice(0, 5)
         .map((line: NormalizedTextLine) => line.text),
@@ -59,5 +83,15 @@ export class LocalStatementExtractionService implements StatementExtractionServi
       ...result.statement,
       metadata,
     }
+  }
+
+  private resolveParser(bank: string): ResolvedStatementParser {
+    const resolved = this.parserRegistry.resolve(bank)
+
+    if (!resolved) {
+      throw new UnsupportedBankError(bank)
+    }
+
+    return resolved
   }
 }

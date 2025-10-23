@@ -1,4 +1,4 @@
-import { MultipartFile } from '@fastify/multipart'
+import { Multipart, MultipartFile } from '@fastify/multipart'
 import { FastifyReply, FastifyRequest } from 'fastify'
 
 import { ExtractStatementUseCase } from '../../../application/useCases/ExtractStatementUseCase'
@@ -11,7 +11,11 @@ export class ParseStatementController {
   constructor(private readonly useCase: ExtractStatementUseCase) {}
 
   async handle(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const file = await this.consumeMultipartFile(request)
+    const { file, bank: bankFromForm } = await this.consumeMultipartPayload(request)
+    const bank =
+      bankFromForm ??
+      this.extractBankFromQuery(request) ??
+      this.extractBankFromHeaders(request)
 
     if (!file) {
       reply.status(400).send({
@@ -27,8 +31,16 @@ export class ParseStatementController {
       return
     }
 
+    if (!bank) {
+      reply.status(400).send({
+        message: "Campo 'bank' é obrigatório.",
+      })
+      return
+    }
+
     try {
       const statement = await this.useCase.execute({
+        bank,
         fileBuffer: file.buffer,
         fileName: file.filename ?? 'statement.pdf',
         mimeType: file.mimetype,
@@ -44,24 +56,87 @@ export class ParseStatementController {
     }
   }
 
-  private async consumeMultipartFile(
+  private async consumeMultipartPayload(
     request: FastifyRequest,
-  ): Promise<(MultipartFile & { buffer: Buffer }) | null> {
+  ): Promise<{
+    file: (MultipartFile & { buffer: Buffer }) | null
+    bank: string | null
+  }> {
     const multipartRequest = request as FastifyRequest & {
       file: () => Promise<MultipartFile | undefined>
+      parts: () => AsyncIterableIterator<Multipart | MultipartFile>
     }
 
     if (typeof multipartRequest.file !== 'function') {
-      return null
+      return { file: null, bank: null }
     }
 
-    const file = await multipartRequest.file()
+    if (typeof multipartRequest.parts !== 'function') {
+      const file = await multipartRequest.file()
 
-    if (!file) return null
+      if (!file) return { file: null, bank: null }
 
-    return {
-      ...file,
-      buffer: await file.toBuffer(),
+      return {
+        file: {
+          ...file,
+          buffer: await file.toBuffer(),
+        },
+        bank: null,
+      }
     }
+
+    let file: (MultipartFile & { buffer: Buffer }) | null = null
+    let bank: string | null = null
+
+    for await (const part of multipartRequest.parts()) {
+      if (part.type === 'file') {
+        if (!file && part.fieldname === 'file') {
+          file = {
+            ...(part as MultipartFile),
+            buffer: await (part as MultipartFile).toBuffer(),
+          }
+        }
+        continue
+      }
+
+      if (part.type === 'field' && part.fieldname === 'bank') {
+        const value = Array.isArray(part.value)
+          ? part.value[0]
+          : part.value
+        if (typeof value === 'string' && value.trim().length > 0) {
+          bank = value.trim()
+        }
+      }
+    }
+
+    return { file, bank }
+  }
+
+  private extractBankFromQuery(request: FastifyRequest): string | null {
+    const query = request.query as { bank?: unknown } | undefined
+    const bank = query?.bank
+
+    if (typeof bank === 'string' && bank.trim().length > 0) {
+      return bank.trim()
+    }
+
+    return null
+  }
+
+  private extractBankFromHeaders(request: FastifyRequest): string | null {
+    const header = request.headers['x-bank']
+
+    if (typeof header === 'string' && header.trim().length > 0) {
+      return header.trim()
+    }
+
+    if (Array.isArray(header)) {
+      const value = header.find((item) => typeof item === 'string' && item.trim().length > 0)
+      if (value) {
+        return value.trim()
+      }
+    }
+
+    return null
   }
 }
