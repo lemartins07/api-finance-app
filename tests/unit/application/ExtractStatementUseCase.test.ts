@@ -7,15 +7,18 @@ import { StatementExtractionService } from '../../../src/domain/services/Stateme
 describe('ExtractStatementUseCase', () => {
   it('delegates the extraction to the service including the bank parameter', async () => {
     const mockStatement = {
-      cardholder: 'Tester',
-      closingDate: null,
-      dueDate: null,
-      invoiceNumber: null,
-      currency: 'BRL',
-      totalAmount: 100,
-      minimumPayment: null,
-      transactions: [],
-      rawTextPath: null,
+      cardholder_name: 'Tester',
+      main_card_last4: '1234',
+      due_date: null,
+      closing_date: null,
+      total_amount_due: 100,
+      minimum_payment: null,
+      best_purchase_day: null,
+      auto_debit: null,
+      annual_fee: null,
+      credit_limit: null,
+      available_limit: null,
+      cards: [],
       metadata: {},
     } satisfies CreditCardStatement
 

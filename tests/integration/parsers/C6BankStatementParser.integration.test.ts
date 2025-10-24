@@ -27,8 +27,10 @@ describe('C6BankStatementParser integration', () => {
     expect(pdfSpy).toHaveBeenCalled()
     expect(normalizerSpy).toHaveBeenCalled()
     expect(result.statement).not.toBeNull()
-    expect(result.statement?.totalAmount).toBe(2000)
-    expect(result.statement?.transactions).toHaveLength(3)
+    expect(result.statement?.cardholder_name).toBe('LEANDRO AZEVEDO MARTINS')
+    expect(result.statement?.main_card_last4).toBe('1111')
+    expect(result.statement?.total_amount_due).toBe(2000)
+    expect(result.statement?.cards).toHaveLength(2)
 
     const summaries = result.statement?.metadata.cardSummaries ?? []
     expect(summaries).toHaveLength(2)
@@ -48,5 +50,22 @@ describe('C6BankStatementParser integration', () => {
       subtotalDifference: 0,
       transactionCount: 1,
     })
+
+    const principalCardDetails = result.statement?.cards.find((card) => card.is_additional === false)
+    expect(principalCardDetails).toMatchObject({
+      last4_digits: '1111',
+      cardholder: 'LEANDRO AZEVEDO',
+      card_subtotal: 1500,
+    })
+    expect(principalCardDetails?.transactions).toHaveLength(2)
+    expect(principalCardDetails?.transactions?.every((tx) => (tx?.amount ?? 0) > 0)).toBe(true)
+
+    const additionalCardDetails = result.statement?.cards.find((card) => card.is_additional === true)
+    expect(additionalCardDetails).toMatchObject({
+      last4_digits: '2222',
+      cardholder: 'MARIA AZEVEDO',
+      card_subtotal: 500,
+    })
+    expect(additionalCardDetails?.transactions).toHaveLength(1)
   })
 })

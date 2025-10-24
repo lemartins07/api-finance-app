@@ -1,6 +1,11 @@
 import { performance } from 'node:perf_hooks'
 
-import { CreditCardStatement, Transaction } from '../../../domain/entities/CreditCardStatement'
+import {
+  CreditCardStatement,
+  StatementCard,
+  StatementTransaction,
+  TransactionType,
+} from '../../../domain/entities/CreditCardStatement'
 import type { LocalStatementParserResult } from './LocalStatementParser'
 import { Pdf2JsonExtractor } from './Pdf2JsonExtractor'
 import {
@@ -48,13 +53,17 @@ export interface C6BankStatementParserConfig {
 }
 
 interface ParsedHeaderResult {
-  cardholder?: string
+  cardholderName?: string
   closingDate?: string | null
   dueDate?: string | null
   invoiceNumber?: string | null
-  currency?: string
   totalAmount?: number | null
   minimumPayment?: number | null
+  bestPurchaseDay?: number | null
+  autoDebit?: 'Enabled' | 'Disabled' | null
+  annualFee?: string | null
+  creditLimit?: number | null
+  availableLimit?: number | null
   year?: number
   closingMonth?: number
 }
@@ -67,7 +76,7 @@ interface CardBlock {
   cardType?: string | null
   expectedSubtotal: number | null
   rawSubtotalText: string | null
-  transactions: Transaction[]
+  transactions: StatementTransaction[]
 }
 
 export class C6BankStatementParser {
@@ -121,26 +130,42 @@ export class C6BankStatementParser {
     const totalAmount = header.totalAmount ?? this.extractInvoiceTotal(lines)
     const minimumPayment = header.minimumPayment ?? this.extractMinimumPayment(lines)
 
+    const cards: StatementCard[] = cardBlocks.map((block) => ({
+      card_type: block.cardType ?? null,
+      last4_digits: block.lastDigits ?? null,
+      cardholder: block.cardholder ?? null,
+      is_additional: block.section === 'adicionais' ? true : false,
+      card_subtotal: block.expectedSubtotal,
+      transactions: block.transactions,
+    }))
+
+    const mainCardLast4 =
+      cardBlocks.find((block) => block.section === 'principal' && block.lastDigits)?.lastDigits ??
+      null
+
     const statement: CreditCardStatement = {
-      cardholder: header.cardholder ?? null,
-      closingDate: header.closingDate ?? null,
-      dueDate: header.dueDate ?? null,
-      invoiceNumber: header.invoiceNumber ?? null,
-      currency: header.currency ?? this.fallbackCurrency,
-      totalAmount,
-      minimumPayment,
-      transactions: allTransactions.map((tx) => ({
-        ...tx,
-        currency: tx.currency ?? header.currency ?? this.fallbackCurrency,
-      })),
-      rawTextPath: null,
+      cardholder_name: header.cardholderName ?? null,
+      main_card_last4: mainCardLast4,
+      due_date: header.dueDate ?? null,
+      closing_date: header.closingDate ?? null,
+      total_amount_due: totalAmount,
+      minimum_payment: minimumPayment,
+      best_purchase_day: header.bestPurchaseDay ?? null,
+      auto_debit: header.autoDebit ?? null,
+      annual_fee: header.annualFee ?? null,
+      credit_limit: header.creditLimit ?? null,
+      available_limit: header.availableLimit ?? null,
+      cards,
       metadata: {
         parser: 'local:c6-bank',
         source: 'pdf2json',
         lineCount: lines.length,
+        invoiceNumber: header.invoiceNumber ?? null,
         cardSummaries: cardBlocks.map((block) => {
           const signedTotal = Number(
-            block.transactions.reduce((acc, tx) => acc + tx.amount, 0).toFixed(2),
+            block.transactions
+              .reduce((acc, tx) => acc + this.getSignedAmount(tx), 0)
+              .toFixed(2),
           )
           const absoluteTotal = Number(Math.abs(signedTotal).toFixed(2))
           return {
@@ -176,16 +201,16 @@ export class C6BankStatementParser {
   }
 
   private extractHeader(lines: NormalizedTextLine[]): ParsedHeaderResult {
-    const result: ParsedHeaderResult = { currency: 'BRL' }
+    const result: ParsedHeaderResult = {}
 
     for (const line of lines) {
       const text = line.text
       if (!text) continue
 
-      if (!result.cardholder) {
+      if (!result.cardholderName) {
         const cardholderMatch = text.match(/LEANDRO\s+AZEVEDO\s+MARTINS/i)
         if (cardholderMatch) {
-          result.cardholder = cardholderMatch[0].trim()
+          result.cardholderName = cardholderMatch[0].trim()
         }
       }
 
@@ -227,6 +252,42 @@ export class C6BankStatementParser {
         const invoiceMatch = text.match(/NOSSO NÚMERO\s*(\d{6,})/i)
         if (invoiceMatch) {
           result.invoiceNumber = invoiceMatch[1].trim()
+        }
+      }
+
+      if (result.bestPurchaseDay == null) {
+        const bestDayMatch = text.match(/Melhor dia de compra:\s*(\d{1,2})/i)
+        if (bestDayMatch) {
+          result.bestPurchaseDay = Number.parseInt(bestDayMatch[1], 10)
+        }
+      }
+
+      if (result.autoDebit === undefined) {
+        const autoDebitMatch = text.match(/Débito automático:\s*(Ativado|Desativado)/i)
+        if (autoDebitMatch) {
+          const value = autoDebitMatch[1].toLowerCase()
+          result.autoDebit = value.startsWith('ativ') ? 'Enabled' : 'Disabled'
+        }
+      }
+
+      if (!result.annualFee) {
+        const annualFeeMatch = text.match(/Anuidade:\s*([^|]+)/i)
+        if (annualFeeMatch) {
+          result.annualFee = this.normalizeAnnualFee(annualFeeMatch[1])
+        }
+      }
+
+      if (!result.creditLimit) {
+        const creditLimitMatch = text.match(/Limite\s+(?:total|crédito).*R\$\s*([\d.,]+)/i)
+        if (creditLimitMatch) {
+          result.creditLimit = this.parseCurrency(creditLimitMatch[1])
+        }
+      }
+
+      if (!result.availableLimit) {
+        const availableLimitMatch = text.match(/Limite\s+disponível.*R\$\s*([\d.,]+)/i)
+        if (availableLimitMatch) {
+          result.availableLimit = this.parseCurrency(availableLimitMatch[1])
         }
       }
     }
@@ -306,8 +367,8 @@ export class C6BankStatementParser {
     lines: NormalizedTextLine[],
     fallbackYear?: number,
     closingMonth?: number,
-  ): Transaction[] {
-    const transactions: Transaction[] = []
+  ): StatementTransaction[] {
+    const transactions: StatementTransaction[] = []
 
     for (const line of lines) {
       const groups = this.splitLineIntoTransactionChunks(line)
@@ -329,21 +390,17 @@ export class C6BankStatementParser {
         const amount = this.parseCurrency(amountText)
         if (amount === null) continue
 
-        const signedAmount = this.normalizeAmountSign(description, amount)
+        const transactionType = this.determineTransactionType(description)
+        const installment = this.extractInstallmentInfo(description)
 
         transactions.push({
           date,
           description,
-          amount: signedAmount,
+          amount,
           currency: this.fallbackCurrency,
-          category: null,
-          metadata: {
-            sourceChunks: group.map((chunk) => ({
-              text: chunk.text,
-              x: chunk.x,
-              y: chunk.y,
-            })),
-          },
+          transaction_type: transactionType,
+          inferred_category: null,
+          installment,
         })
       }
     }
@@ -415,11 +472,67 @@ export class C6BankStatementParser {
     return `${year}-${month}-${day}`
   }
 
-  private normalizeAmountSign(description: string, amount: number): number {
-    const creditIndicators = /(estorno|pagamento|cr[eé]dito|cashback|ajuste|antecip|inclus[aã]o)/i
-    const isCredit = creditIndicators.test(description)
-    const normalized = isCredit ? amount : amount * -1
-    return Number(normalized.toFixed(2))
+  private determineTransactionType(description: string): TransactionType {
+    const normalized = description.toLowerCase()
+
+    if (/(estorno|reembolso|cashback|cr[eé]dito)/i.test(normalized)) {
+      return 'refund'
+    }
+
+    if (/(pagamento|pagto|boleto|pix)/i.test(normalized)) {
+      return 'payment'
+    }
+
+    if (/(ajuste|ajust|antecip|inclus[aã]o|compensa[cç][aã]o)/i.test(normalized)) {
+      return 'adjustment'
+    }
+
+    if (/(tarifa|juros|encargo|anuidade|multa)/i.test(normalized)) {
+      return 'fee'
+    }
+
+    if (/(parcela|parcelamento|parcelado|\d+\/\d+)/i.test(normalized)) {
+      return 'installment'
+    }
+
+    return 'purchase'
+  }
+
+  private extractInstallmentInfo(description: string): StatementTransaction['installment'] {
+    const match = description.match(/(\d{1,2})\/(\d{1,2})/)
+    if (!match) {
+      return { current: null, total: null }
+    }
+
+    const current = Number.parseInt(match[1], 10)
+    const total = Number.parseInt(match[2], 10)
+
+    if (Number.isNaN(current) || Number.isNaN(total)) {
+      return { current: null, total: null }
+    }
+
+    return { current, total }
+  }
+
+  private getSignedAmount(transaction: StatementTransaction): number {
+    const amount = transaction.amount ?? 0
+    const type = transaction.transaction_type
+
+    if (type === 'payment' || type === 'refund' || type === 'adjustment') {
+      return amount
+    }
+
+    return amount * -1
+  }
+
+  private normalizeAnnualFee(value: string | null | undefined): string | null {
+    if (!value) return null
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (/isento/i.test(trimmed)) {
+      return 'Exempt'
+    }
+    return trimmed
   }
 
   private parseCardHeader(line: NormalizedTextLine): {
