@@ -1,14 +1,50 @@
+import type { FastifyReply, FastifyRequest } from 'fastify'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ExtractStatementUseCase } from '../../../src/application/useCases/ExtractStatementUseCase'
 import { ParseStatementController } from '../../../src/infrastructure/http/controllers/ParseStatementController'
 
 function createReplyMock() {
-  const send = vi.fn()
-  const reply: Record<string, any> = {}
-  reply.status = vi.fn().mockImplementation(() => reply)
-  reply.send = send
-  return { reply: reply as any, status: reply.status, send }
+  type ReplyShape = Pick<FastifyReply, 'status' | 'send'>
+
+  const replyRef: { current: FastifyReply | null } = { current: null }
+
+  const statusMock = vi.fn((statusCode: number) => {
+    if (typeof statusCode !== 'number') {
+      throw new TypeError('status code must be a number')
+    }
+    return replyRef.current as FastifyReply
+  })
+  const sendMock = vi.fn((payload: unknown) => {
+    if (payload === undefined) {
+      throw new TypeError('payload must be provided')
+    }
+    return replyRef.current as FastifyReply
+  })
+
+  const replyShape: ReplyShape = {
+    status: statusMock as unknown as ReplyShape['status'],
+    send: sendMock as unknown as ReplyShape['send'],
+  }
+
+  replyRef.current = replyShape as unknown as FastifyReply
+
+  return {
+    reply: replyRef.current,
+    status: statusMock,
+    send: sendMock,
+  }
+}
+
+function createRequestMock(overrides?: {
+  headers?: FastifyRequest['headers']
+  query?: FastifyRequest['query']
+}): FastifyRequest {
+  return {
+    log: { error: vi.fn() },
+    headers: overrides?.headers ?? {},
+    query: overrides?.query,
+  } as unknown as FastifyRequest
 }
 
 describe('ParseStatementController', () => {
@@ -26,7 +62,7 @@ describe('ParseStatementController', () => {
       .mockResolvedValue({ file, bank: 'c6' })
 
     const { reply, status, send } = createReplyMock()
-    const request = { log: { error: vi.fn() }, headers: {}, query: undefined } as any
+    const request = createRequestMock()
 
     await controller.handle(request, reply)
 
@@ -51,11 +87,7 @@ describe('ParseStatementController', () => {
       .mockResolvedValue({ file, bank: null })
 
     const { reply, status, send } = createReplyMock()
-    const request = {
-      log: { error: vi.fn() },
-      headers: {},
-      query: { bank: ' generic ' },
-    } as any
+    const request = createRequestMock({ query: { bank: ' generic ' } })
 
     await controller.handle(request, reply)
 
@@ -75,7 +107,7 @@ describe('ParseStatementController', () => {
       .mockResolvedValue({ file: { buffer: Buffer.from('pdf'), mimetype: 'application/pdf' }, bank: null })
 
     const { reply, status, send } = createReplyMock()
-    const request = { log: { error: vi.fn() }, headers: {}, query: {} } as any
+    const request = createRequestMock({ query: {} })
 
     await controller.handle(request, reply)
 

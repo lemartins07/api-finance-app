@@ -134,7 +134,7 @@ export class C6BankStatementParser {
       card_type: block.cardType ?? null,
       last4_digits: block.lastDigits ?? null,
       cardholder: block.cardholder ?? null,
-      is_additional: block.section === 'adicionais' ? true : false,
+      is_additional: block.section === 'adicionais',
       card_subtotal: block.expectedSubtotal,
       transactions: block.transactions,
     }))
@@ -208,9 +208,13 @@ export class C6BankStatementParser {
       if (!text) continue
 
       if (!result.cardholderName) {
-        const cardholderMatch = text.match(/LEANDRO\s+AZEVEDO\s+MARTINS/i)
-        if (cardholderMatch) {
-          result.cardholderName = cardholderMatch[0].trim()
+        const candidate = text.trim()
+        if (
+          candidate.length >= 5 &&
+          /^(?:[A-ZÀ-Ü][A-ZÀ-Ü\s\-']+)$/.test(candidate) &&
+          candidate.split(/\s+/).length >= 2
+        ) {
+          result.cardholderName = candidate
         }
       }
 

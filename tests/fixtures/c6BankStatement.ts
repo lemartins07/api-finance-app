@@ -1,5 +1,5 @@
-import { NormalizedTextChunk, NormalizedTextLine } from '../../src/infrastructure/parsers/pdf/PdfTextNormalizer'
 import { Pdf2JsonDocument } from '../../src/infrastructure/parsers/pdf/Pdf2JsonExtractor'
+import { NormalizedTextChunk, NormalizedTextLine } from '../../src/infrastructure/parsers/pdf/PdfTextNormalizer'
 
 function chunk(text: string, x: number, y: number): NormalizedTextChunk {
   return {

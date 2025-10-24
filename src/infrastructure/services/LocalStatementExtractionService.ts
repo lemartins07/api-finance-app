@@ -57,9 +57,22 @@ export class LocalStatementExtractionService implements StatementExtractionServi
     }
 
     if (!result.statement) {
+      const sample = result.lines.slice(0, 10).map((line) => {
+        const chunks = line.chunks
+          .map(
+            (chunk) =>
+              `[x=${chunk.x.toFixed(2)} y=${chunk.y.toFixed(2)} w=${chunk.width.toFixed(2)}] ${chunk.text}`,
+          )
+          .join(' | ')
+        return `page=${line.page} y=${line.y.toFixed(2)} :: ${chunks}`
+      })
+
       console.warn(
-        '[local-parser] falha: dados insuficientes para montar statement, enviando para fallback',
+        '[local-parser] falha: dados insuficientes para montar statement (nenhum parser adicional configurado)',
       )
+      if (sample.length > 0) {
+        console.warn('[local-parser] sample lines:', sample)
+      }
       throw new LocalParserInsufficientDataError()
     }
 
