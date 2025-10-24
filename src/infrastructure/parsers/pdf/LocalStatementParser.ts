@@ -1,6 +1,11 @@
 import { performance } from 'node:perf_hooks'
 
-import { CreditCardStatement, Transaction } from '../../../domain/entities/CreditCardStatement'
+import {
+  CreditCardStatement,
+  StatementCard,
+  StatementTransaction,
+  TransactionType,
+} from '../../../domain/entities/CreditCardStatement'
 import { Pdf2JsonDocument, Pdf2JsonExtractor } from './Pdf2JsonExtractor'
 import {
   NormalizedTextChunk,
@@ -77,23 +82,39 @@ export class LocalStatementParser {
       }
     }
 
+    const cards: StatementCard[] =
+      transactions.length > 0
+        ? [
+            {
+              card_type: null,
+              last4_digits: null,
+              cardholder: header.cardholder ?? null,
+              is_additional: null,
+              card_subtotal: null,
+              transactions,
+            },
+          ]
+        : []
+
     const statement: CreditCardStatement = {
-      cardholder: header.cardholder ?? null,
-      closingDate: header.closingDate ?? null,
-      dueDate: header.dueDate ?? null,
-      invoiceNumber: header.invoiceNumber ?? null,
-      currency: header.currency ?? this.fallbackCurrency,
-      totalAmount: header.totalAmount ?? null,
-      minimumPayment: header.minimumPayment ?? null,
-      transactions: transactions.map((tx) => ({
-        ...tx,
-        currency: tx.currency ?? header.currency ?? this.fallbackCurrency,
-      })),
-      rawTextPath: null,
+      cardholder_name: header.cardholder ?? null,
+      main_card_last4: null,
+      due_date: header.dueDate ?? null,
+      closing_date: header.closingDate ?? null,
+      total_amount_due: header.totalAmount ?? null,
+      minimum_payment: header.minimumPayment ?? null,
+      best_purchase_day: null,
+      auto_debit: null,
+      annual_fee: null,
+      credit_limit: null,
+      available_limit: null,
+      cards,
       metadata: {
         parser: 'local',
         source: 'pdf2json',
         lineCount: lines.length,
+        invoiceNumber: header.invoiceNumber ?? null,
+        currency: header.currency ?? this.fallbackCurrency,
       },
     }
 
@@ -189,8 +210,8 @@ export class LocalStatementParser {
   private extractTransactions(
     lines: NormalizedTextLine[],
     fallbackYear?: number,
-  ): Transaction[] {
-    const transactions: Transaction[] = []
+  ): StatementTransaction[] {
+    const transactions: StatementTransaction[] = []
 
     for (const line of lines) {
       if (line.chunks.length < 3) continue
@@ -210,19 +231,16 @@ export class LocalStatementParser {
 
       if (amount === null) continue
 
+      const transactionType = this.determineTransactionType(description)
+
       transactions.push({
         date,
         description,
-        amount: this.normalizeAmountSign(amountText, amount),
+        amount,
         currency: this.fallbackCurrency,
-        category: null,
-        metadata: {
-          sourceChunks: sortedChunks.map((chunk) => ({
-            text: chunk.text,
-            x: chunk.x,
-            y: chunk.y,
-          })),
-        },
+        transaction_type: transactionType,
+        inferred_category: null,
+        installment: { current: null, total: null },
       })
     }
 
@@ -285,9 +303,29 @@ export class LocalStatementParser {
     return Number.isFinite(number) ? Number(number.toFixed(2)) : null
   }
 
-  private normalizeAmountSign(raw: string, amount: number): number {
-    const positiveIndicators = /(cr|c|credit)/i
-    const normalized = positiveIndicators.test(raw) ? amount : amount * -1
-    return Number(normalized.toFixed(2))
+  private determineTransactionType(description: string): TransactionType {
+    const normalized = description.toLowerCase()
+
+    if (/(estorno|reembolso|cashback|cr[eé]dito)/i.test(normalized)) {
+      return 'refund'
+    }
+
+    if (/(pagamento|pagto|boleto)/i.test(normalized)) {
+      return 'payment'
+    }
+
+    if (/(parcela|parcelamento|parcelado)/i.test(normalized)) {
+      return 'installment'
+    }
+
+    if (/(tarifa|juros|anuidade|multa|encargo)/i.test(normalized)) {
+      return 'fee'
+    }
+
+    if (/(ajuste|ajustado|compensa[cç][aã]o)/i.test(normalized)) {
+      return 'adjustment'
+    }
+
+    return 'purchase'
   }
 }
